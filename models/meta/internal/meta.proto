@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package internal;
+
+message Data {
+    uint64 Term = 1;
+    uint64 Index = 2;
+    uint64 ClusterID = 3;
+
+    repeated DatabaseInfo DataBases = 4;
+
+    repeated NodeInfo MetaNode = 5;
+    repeated NodeInfo DataNode = 6;
+}
+
+message DatabaseInfo {
+    string Name = 1;
+    string DefaultRetentionPolicy = 2;
+    repeated RetentionPolicyInfo RetentionPolicies = 3;
+    repeated ContinuousQueryInfo ContinuousQueries = 4;
+}
+
+message NodeInfo {
+    uint64 ID = 1;
+    string Host = 2;
+    string TCPHost = 3;
+}
+
+message RetentionPolicyInfo {
+    string Name = 1;
+    uint32 ReplicaN = 2;
+    uint64 Duration = 3;
+    uint64 ShardGroupDuration = 4;
+    repeated ShardGroupInfo ShardGroups = 5;
+}
+message ShardGroupInfo {
+    uint64 ID = 1;
+    uint64 StartTime = 2;
+    uint64 EndTime = 3;
+    uint64 DeletedAt = 4;
+    repeated ShardInfo Shards = 5;
+    uint64 TruncatedAt = 6;
+}
+message ShardInfo {
+    uint64 ID = 1;
+    repeated ShardOwner Owners = 2;
+}
+message ShardOwner {
+    uint64 NodeID = 1;
+}
+message ContinuousQueryInfo {
+    string Name = 1;
+    string Query = 2;
+}
+
