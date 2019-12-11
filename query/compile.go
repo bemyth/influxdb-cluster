@@ -1100,6 +1100,7 @@ func (c *compiledStatement) Prepare(shardMapper ShardMapper, sopt SelectOptions)
 
 	// Create an iterator creator based on the shards in the cluster.
 	shards, err := shardMapper.MapShards(c.stmt.Sources, timeRange, sopt)
+
 	if err != nil {
 		return nil, err
 	}
@@ -1107,6 +1108,10 @@ func (c *compiledStatement) Prepare(shardMapper ShardMapper, sopt SelectOptions)
 	// Rewrite wildcards, if any exist.
 	mapper := FieldMapper{FieldMapper: shards}
 	stmt, err := c.stmt.RewriteFields(mapper)
+	//重写field，目的在于确定field和cond中的数据类型
+	//1.对于飞varexpr的类型，直接返回
+	//2.对于非未知类型和任意类型的var，直接返回
+	//3.如果没有通匹配符，直接返回，如果有通匹配符，还需获取该表所有字段然后添加
 	if err != nil {
 		shards.Close()
 		return nil, err

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/pkg/file"
 	"github.com/influxdata/influxdb/pkg/limiter"
 	"github.com/influxdata/influxdb/pkg/metrics"
 	"github.com/influxdata/influxdb/query"
@@ -45,10 +46,15 @@ type TSMFile interface {
 	// ReadAt returns all the values in the block identified by entry.
 	ReadAt(entry *IndexEntry, values []Value) ([]Value, error)
 	ReadFloatBlockAt(entry *IndexEntry, values *[]FloatValue) ([]FloatValue, error)
+	ReadFloatArrayBlockAt(entry *IndexEntry, values *tsdb.FloatArray) error
 	ReadIntegerBlockAt(entry *IndexEntry, values *[]IntegerValue) ([]IntegerValue, error)
+	ReadIntegerArrayBlockAt(entry *IndexEntry, values *tsdb.IntegerArray) error
 	ReadUnsignedBlockAt(entry *IndexEntry, values *[]UnsignedValue) ([]UnsignedValue, error)
+	ReadUnsignedArrayBlockAt(entry *IndexEntry, values *tsdb.UnsignedArray) error
 	ReadStringBlockAt(entry *IndexEntry, values *[]StringValue) ([]StringValue, error)
+	ReadStringArrayBlockAt(entry *IndexEntry, values *tsdb.StringArray) error
 	ReadBooleanBlockAt(entry *IndexEntry, values *[]BooleanValue) ([]BooleanValue, error)
+	ReadBooleanArrayBlockAt(entry *IndexEntry, values *tsdb.BooleanArray) error
 
 	// Entries returns the index entries for all blocks for the given key.
 	Entries(key []byte) []IndexEntry
@@ -171,9 +177,9 @@ type FileStore struct {
 	currentGeneration int
 	dir               string
 
-	files []TSMFile
-
-	openLimiter limiter.Fixed // limit the number of concurrent opening TSM files.
+	files           []TSMFile
+	tsmMMAPWillNeed bool          // If true then the kernel will be advised MMAP_WILLNEED for TSM files.
+	openLimiter     limiter.Fixed // limit the number of concurrent opening TSM files.
 
 	logger       *zap.Logger // Logger to be used for important messages
 	traceLogger  *zap.Logger // Logger to be used when trace-logging is on.
@@ -183,6 +189,8 @@ type FileStore struct {
 	purger *purger
 
 	currentTempDirID int
+
+	parseFileName ParseFileNameFunc
 
 	obs tsdb.FileStoreObserver
 }
@@ -226,7 +234,8 @@ func NewFileStore(dir string) *FileStore {
 			files:  map[string]TSMFile{},
 			logger: logger,
 		},
-		obs: noFileStoreObserver{},
+		obs:           noFileStoreObserver{},
+		parseFileName: DefaultParseFileName,
 	}
 	fs.purger.fileStore = fs
 	return fs
@@ -235,6 +244,14 @@ func NewFileStore(dir string) *FileStore {
 // WithObserver sets the observer for the file store.
 func (f *FileStore) WithObserver(obs tsdb.FileStoreObserver) {
 	f.obs = obs
+}
+
+func (f *FileStore) WithParseFileNameFunc(parseFileNameFunc ParseFileNameFunc) {
+	f.parseFileName = parseFileNameFunc
+}
+
+func (f *FileStore) ParseFileName(path string) (int, int, error) {
+	return f.parseFileName(path)
 }
 
 // enableTraceLogging must be called before the FileStore is opened.
@@ -493,7 +510,7 @@ func (f *FileStore) Open() error {
 	readerC := make(chan *res)
 	for i, fn := range files {
 		// Keep track of the latest ID
-		generation, _, err := ParseFileName(fn)
+		generation, _, err := f.parseFileName(fn)
 		if err != nil {
 			return err
 		}
@@ -515,7 +532,7 @@ func (f *FileStore) Open() error {
 			defer f.openLimiter.Release()
 
 			start := time.Now()
-			df, err := NewTSMReader(file)
+			df, err := NewTSMReader(file, WithMadviseWillNeed(f.tsmMMAPWillNeed))
 			f.logger.Info("Opened file",
 				zap.String("path", file.Name()),
 				zap.Int("id", idx),
@@ -733,7 +750,7 @@ func (f *FileStore) replace(oldFiles, newFiles []string, updatedFn func(r []TSMF
 			}
 		}
 
-		tsm, err := NewTSMReader(fd)
+		tsm, err := NewTSMReader(fd, WithMadviseWillNeed(f.tsmMMAPWillNeed))
 		if err != nil {
 			return err
 		}
@@ -826,7 +843,7 @@ func (f *FileStore) replace(oldFiles, newFiles []string, updatedFn func(r []TSMF
 		}
 	}
 
-	if err := syncDir(f.dir); err != nil {
+	if err := file.SyncDir(f.dir); err != nil {
 		return err
 	}
 
@@ -1062,8 +1079,8 @@ func DefaultFormatFileName(generation, sequence int) string {
 // ParseFileNameFunc is executed when parsing a TSM filename into generation & sequence.
 type ParseFileNameFunc func(name string) (generation, sequence int, err error)
 
-// ParseFileName is used to parse the filenames of TSM files.
-var ParseFileName ParseFileNameFunc = func(name string) (int, int, error) {
+// DefaultParseFileName is used to parse the filenames of TSM files.
+func DefaultParseFileName(name string) (int, int, error) {
 	base := filepath.Base(name)
 	idx := strings.Index(base, ".")
 	if idx == -1 {
@@ -1306,41 +1323,6 @@ func (c *KeyCursor) nextDescending() {
 		}
 		c.current = append(c.current, c.seeks[i])
 	}
-}
-
-func (c *KeyCursor) filterFloatValues(tombstones []TimeRange, values FloatValues) FloatValues {
-	for _, t := range tombstones {
-		values = values.Exclude(t.Min, t.Max)
-	}
-	return values
-}
-
-func (c *KeyCursor) filterIntegerValues(tombstones []TimeRange, values IntegerValues) IntegerValues {
-	for _, t := range tombstones {
-		values = values.Exclude(t.Min, t.Max)
-	}
-	return values
-}
-
-func (c *KeyCursor) filterUnsignedValues(tombstones []TimeRange, values UnsignedValues) UnsignedValues {
-	for _, t := range tombstones {
-		values = values.Exclude(t.Min, t.Max)
-	}
-	return values
-}
-
-func (c *KeyCursor) filterStringValues(tombstones []TimeRange, values StringValues) StringValues {
-	for _, t := range tombstones {
-		values = values.Exclude(t.Min, t.Max)
-	}
-	return values
-}
-
-func (c *KeyCursor) filterBooleanValues(tombstones []TimeRange, values BooleanValues) BooleanValues {
-	for _, t := range tombstones {
-		values = values.Exclude(t.Min, t.Max)
-	}
-	return values
 }
 
 type purger struct {

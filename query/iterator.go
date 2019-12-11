@@ -205,11 +205,11 @@ func NewParallelMergeIterator(inputs []Iterator, opt IteratorOptions, parallelis
 			slice = inputs[i*n:]
 		}
 
-		outputs[i] = newParallelIterator(NewMergeIterator(slice, opt))
+		outputs[i] = NewMergeIterator(slice, opt)
 	}
 
 	// Merge all groups together.
-	return NewMergeIterator(outputs, opt)
+	return newParallelIterator(NewMergeIterator(outputs, opt))
 }
 
 // NewSortedMergeIterator returns an iterator to merge itrs into one.
@@ -438,6 +438,8 @@ func NewIteratorScanner(input Iterator, keys []influxql.VarRef, defaultValue int
 		return newStringIteratorScanner(input, keys, defaultValue)
 	case BooleanIterator:
 		return newBooleanIteratorScanner(input, keys, defaultValue)
+
+	//TODO(add some thing or not)?
 	default:
 		panic(fmt.Sprintf("unsupported type for iterator scanner: %T", input))
 	}
@@ -1319,6 +1321,9 @@ type IteratorEncoder struct {
 
 	// Frequency with which stats are emitted.
 	StatsInterval time.Duration
+
+	//TODO(add with shan.jt) we want encode this iterator with batch
+	//batchPoints int
 }
 
 // NewIteratorEncoder encodes an iterator's points to w.
@@ -1327,6 +1332,7 @@ func NewIteratorEncoder(w io.Writer) *IteratorEncoder {
 		w: w,
 
 		StatsInterval: DefaultStatsInterval,
+		//batchPoints:DefaultBatchsizeOfPoints,
 	}
 }
 

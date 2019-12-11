@@ -19,12 +19,16 @@ import (
 )
 
 // DefaultStatsInterval is the default value for IteratorEncoder.StatsInterval.
-const DefaultStatsInterval = time.Second
+const (
+	DefaultStatsInterval     = time.Second
+	DefaultBatchsizeOfPoints = 10000
+)
 
 // FloatIterator represents a stream of float points.
 type FloatIterator interface {
 	Iterator
 	Next() (*FloatPoint, error)
+	NextBatch() ([]*FloatPoint, error)
 }
 
 // newFloatIterators converts a slice of Iterator to a slice of FloatIterator.
@@ -2581,6 +2585,7 @@ func (itr *floatReaderIterator) Next() (*FloatPoint, error) {
 type IntegerIterator interface {
 	Iterator
 	Next() (*IntegerPoint, error)
+	NextBatch() ([]*IntegerPoint, error)
 }
 
 // newIntegerIterators converts a slice of Iterator to a slice of IntegerIterator.
@@ -5137,6 +5142,7 @@ func (itr *integerReaderIterator) Next() (*IntegerPoint, error) {
 type UnsignedIterator interface {
 	Iterator
 	Next() (*UnsignedPoint, error)
+	NextBatch() ([]*UnsignedPoint, error)
 }
 
 // newUnsignedIterators converts a slice of Iterator to a slice of UnsignedIterator.
@@ -7693,6 +7699,7 @@ func (itr *unsignedReaderIterator) Next() (*UnsignedPoint, error) {
 type StringIterator interface {
 	Iterator
 	Next() (*StringPoint, error)
+	NextBatch() ([]*StringPoint, error)
 }
 
 // newStringIterators converts a slice of Iterator to a slice of StringIterator.
@@ -10235,6 +10242,7 @@ func (itr *stringReaderIterator) Next() (*StringPoint, error) {
 type BooleanIterator interface {
 	Iterator
 	Next() (*BooleanPoint, error)
+	NextBatch() ([]*BooleanPoint, error)
 }
 
 // newBooleanIterators converts a slice of Iterator to a slice of BooleanIterator.
@@ -12786,6 +12794,7 @@ func (enc *IteratorEncoder) encodeFloatIterator(itr FloatIterator) error {
 	// Continually stream points from the iterator into the encoder.
 	penc := NewFloatPointEncoder(enc.w)
 	for {
+		//begin ++
 		// Emit stats periodically.
 		select {
 		case <-ticker.C:
@@ -12845,7 +12854,6 @@ func (enc *IteratorEncoder) encodeIntegerIterator(itr IntegerIterator) error {
 		} else if p == nil {
 			break
 		}
-
 		// Write the point to the point encoder.
 		if err := penc.EncodeIntegerPoint(p); err != nil {
 			return err
@@ -12954,7 +12962,6 @@ func (enc *IteratorEncoder) encodeBooleanIterator(itr BooleanIterator) error {
 	if err := enc.encodeStats(itr.Stats()); err != nil {
 		return err
 	}
-
 	// Continually stream points from the iterator into the encoder.
 	penc := NewBooleanPointEncoder(enc.w)
 	for {
@@ -12980,7 +12987,6 @@ func (enc *IteratorEncoder) encodeBooleanIterator(itr BooleanIterator) error {
 			return err
 		}
 	}
-
 	// Emit final stats.
 	if err := enc.encodeStats(itr.Stats()); err != nil {
 		return err

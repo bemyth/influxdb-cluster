@@ -24,6 +24,7 @@ import (
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/bytesutil"
 	"github.com/influxdata/influxdb/pkg/estimator"
+	"github.com/influxdata/influxdb/pkg/file"
 	"github.com/influxdata/influxdb/pkg/limiter"
 	"github.com/influxdata/influxdb/pkg/metrics"
 	"github.com/influxdata/influxdb/pkg/radix"
@@ -38,10 +39,12 @@ import (
 	"go.uber.org/zap"
 )
 
-//go:generate tmpl -data=@iterator.gen.go.tmpldata iterator.gen.go.tmpl batch_cursor.gen.go.tmpl cursor_iterator.gen.go.tmpl
-//go:generate tmpl -data=@file_store.gen.go.tmpldata file_store.gen.go.tmpl
+//go:generate tmpl -data=@iterator.gen.go.tmpldata iterator.gen.go.tmpl batch_cursor.gen.go.tmpl cursor_iterator.gen.go.tmpl array_cursor.gen.go.tmpl array_cursor_iterator.gen.go.tmpl
+//go:generate go run ../../../_tools/tmpl/main.go -i -data=file_store.gen.go.tmpldata file_store.gen.go.tmpl=file_store.gen.go
+//go:generate go run ../../../_tools/tmpl/main.go -i -d isArray=y -data=file_store.gen.go.tmpldata file_store.gen.go.tmpl=file_store_array.gen.go
 //go:generate tmpl -data=@encoding.gen.go.tmpldata encoding.gen.go.tmpl
 //go:generate tmpl -data=@compact.gen.go.tmpldata compact.gen.go.tmpl
+//go:generate tmpl -data=@reader.gen.go.tmpldata reader.gen.go.tmpl
 
 func init() {
 	tsdb.RegisterEngine("tsm1", NewEngine)
@@ -176,7 +179,7 @@ type Engine struct {
 	WALEnabled bool
 
 	// Invoked when creating a backup file "as new".
-	GenerateFormatFileNameFunc func() FormatFileNameFunc
+	formatFileName FormatFileNameFunc
 
 	// Controls whether to enabled compactions when the engine is open
 	enableCompactionsOnOpen bool
@@ -208,6 +211,8 @@ func NewEngine(id uint64, idx tsdb.Index, path string, walPath string, sfile *ts
 	if opt.FileStoreObserver != nil {
 		fs.WithObserver(opt.FileStoreObserver)
 	}
+	fs.tsmMMAPWillNeed = opt.Config.TSMWillNeed
+
 	cache := NewCache(uint64(opt.Config.CacheMaxMemorySize))
 
 	c := NewCompactor()
@@ -243,7 +248,7 @@ func NewEngine(id uint64, idx tsdb.Index, path string, walPath string, sfile *ts
 		CacheFlushWriteColdDuration:   time.Duration(opt.Config.CacheSnapshotWriteColdDuration),
 		enableCompactionsOnOpen:       true,
 		WALEnabled:                    opt.WALEnabled,
-		GenerateFormatFileNameFunc:    func() FormatFileNameFunc { return DefaultFormatFileName },
+		formatFileName:                DefaultFormatFileName,
 		stats:                         stats,
 		compactionLimiter:             opt.CompactionLimiter,
 		scheduler:                     newScheduler(stats, opt.CompactionLimiter.Capacity()),
@@ -266,6 +271,16 @@ func NewEngine(id uint64, idx tsdb.Index, path string, walPath string, sfile *ts
 	return e
 }
 
+func (e *Engine) WithFormatFileNameFunc(formatFileNameFunc FormatFileNameFunc) {
+	e.Compactor.WithFormatFileNameFunc(formatFileNameFunc)
+	e.formatFileName = formatFileNameFunc
+}
+
+func (e *Engine) WithParseFileNameFunc(parseFileNameFunc ParseFileNameFunc) {
+	e.FileStore.WithParseFileNameFunc(parseFileNameFunc)
+	e.Compactor.WithParseFileNameFunc(parseFileNameFunc)
+}
+
 // Digest returns a reader for the shard's digest.
 func (e *Engine) Digest() (io.ReadCloser, int64, error) {
 	log, logEnd := logger.NewOperation(e.logger, "Engine digest", "tsm1_digest")
@@ -273,47 +288,43 @@ func (e *Engine) Digest() (io.ReadCloser, int64, error) {
 
 	log.Info("Starting digest", zap.String("tsm1_path", e.path))
 
-	digestPath := filepath.Join(e.path, "digest.tsd")
+	digestPath := filepath.Join(e.path, DigestFilename)
 
-	// See if there's an existing digest file on disk.
-	f, err := os.Open(digestPath)
-	if err == nil {
-		// There is an existing digest file. Now see if it is still fresh.
-		fi, err := f.Stat()
-		if err != nil {
-			log.Info("Digest aborted, can't stat existing digest", zap.Error(err))
-			f.Close()
-			return nil, 0, err
-		}
+	// Get a list of tsm file paths from the FileStore.
+	files := e.FileStore.Files()
+	tsmfiles := make([]string, 0, len(files))
+	for _, f := range files {
+		tsmfiles = append(tsmfiles, f.Path())
+	}
 
-		engineLastMod := e.LastModified()
-
-		if !engineLastMod.After(fi.ModTime()) {
-			// Existing digest is still fresh so return a reader for it.
+	// See if there's a fresh digest cached on disk.
+	fresh, reason := DigestFresh(e.path, tsmfiles, e.LastModified())
+	if fresh {
+		f, err := os.Open(digestPath)
+		if err == nil {
 			fi, err := f.Stat()
 			if err != nil {
-				log.Info("Digest aborted, can't stat existing digest", zap.Error(err))
-				f.Close()
+				log.Info("Digest aborted, couldn't stat digest file", logger.Shard(e.id), zap.Error(err))
 				return nil, 0, err
 			}
 
-			log.Info("Digest cache fresh", zap.Time("engine_last_modified", engineLastMod),
-				zap.Time("digest_cache_last_modified", fi.ModTime()), zap.Int64("size", fi.Size()))
+			log.Info("Digest is fresh", logger.Shard(e.id), zap.String("path", digestPath))
 
+			// Return the cached digest.
 			return f, fi.Size(), nil
 		}
-
-		if err := f.Close(); err != nil {
-			log.Info("Digest aborted, problem closing digest", zap.Error(err))
-			return nil, 0, err
-		}
-
-		log.Info("Digest cache stale", zap.Time("engine_last_modified", engineLastMod),
-			zap.Time("digest_cache_last_modified", fi.ModTime()), zap.Int64("size", fi.Size()))
 	}
+
+	log.Info("Digest stale", logger.Shard(e.id), zap.String("reason", reason))
 
 	// Either no digest existed or the existing one was stale
 	// so generate a new digest.
+
+	// Make sure the directory exists, in case it was deleted for some reason.
+	if err := os.MkdirAll(e.path, 0777); err != nil {
+		log.Info("Digest aborted, problem creating shard directory path", zap.Error(err))
+		return nil, 0, err
+	}
 
 	// Create a tmp file to write the digest to.
 	tf, err := os.Create(digestPath + ".tmp")
@@ -323,7 +334,7 @@ func (e *Engine) Digest() (io.ReadCloser, int64, error) {
 	}
 
 	// Write the new digest to the tmp file.
-	if err := Digest(e.path, tf); err != nil {
+	if err := Digest(e.path, tsmfiles, tf); err != nil {
 		log.Info("Digest aborted, problem writing tmp digest", zap.Error(err))
 		tf.Close()
 		os.Remove(tf.Name())
@@ -331,13 +342,13 @@ func (e *Engine) Digest() (io.ReadCloser, int64, error) {
 	}
 
 	// Rename the temporary digest file to the actual digest file.
-	if err := renameFile(tf.Name(), digestPath); err != nil {
+	if err := file.RenameFile(tf.Name(), digestPath); err != nil {
 		log.Info("Digest aborted, problem renaming tmp digest", zap.Error(err))
 		return nil, 0, err
 	}
 
 	// Create and return a reader for the new digest file.
-	f, err = os.Open(digestPath)
+	f, err := os.Open(digestPath)
 	if err != nil {
 		log.Info("Digest aborted, opening new digest", zap.Error(err))
 		return nil, 0, err
@@ -1066,7 +1077,7 @@ func (e *Engine) overlay(r io.Reader, basePath string, asNew bool) error {
 			}
 		}
 
-		if err := syncDir(e.path); err != nil {
+		if err := file.SyncDir(e.path); err != nil {
 			return nil, err
 		}
 
@@ -1182,8 +1193,7 @@ func (e *Engine) readFileFromBackup(tr *tar.Reader, shardRelativePath string, as
 	}
 
 	if asNew {
-		formatFileName := e.GenerateFormatFileNameFunc()
-		filename = formatFileName(e.FileStore.NextGeneration(), 1) + "." + TSMFileExtension
+		filename = e.formatFileName(e.FileStore.NextGeneration(), 1) + "." + TSMFileExtension
 	}
 
 	tmp := fmt.Sprintf("%s.%s", filepath.Join(e.path, filename), TmpTSMFileExtension)
@@ -1784,7 +1794,6 @@ func (e *Engine) WriteSnapshot() error {
 		logEnd()
 	}()
 
-	var formatFileName FormatFileNameFunc
 	closedFiles, snapshot, err := func() (segments []string, snapshot *Cache, err error) {
 		e.mu.Lock()
 		defer e.mu.Unlock()
@@ -1804,9 +1813,6 @@ func (e *Engine) WriteSnapshot() error {
 		if err != nil {
 			return
 		}
-
-		// Determine filename generation function under lock.
-		formatFileName = e.GenerateFormatFileNameFunc()
 
 		return
 	}()
@@ -1829,7 +1835,7 @@ func (e *Engine) WriteSnapshot() error {
 		zap.String("path", e.path),
 		zap.Duration("duration", time.Since(dedup)))
 
-	return e.writeSnapshotAndCommit(log, closedFiles, snapshot, formatFileName)
+	return e.writeSnapshotAndCommit(log, closedFiles, snapshot)
 }
 
 // CreateSnapshot will create a temp directory that holds
@@ -1851,7 +1857,7 @@ func (e *Engine) CreateSnapshot() (string, error) {
 }
 
 // writeSnapshotAndCommit will write the passed cache to a new TSM file and remove the closed WAL segments.
-func (e *Engine) writeSnapshotAndCommit(log *zap.Logger, closedFiles []string, snapshot *Cache, formatFileName FormatFileNameFunc) (err error) {
+func (e *Engine) writeSnapshotAndCommit(log *zap.Logger, closedFiles []string, snapshot *Cache) (err error) {
 	defer func() {
 		if err != nil {
 			e.Cache.ClearSnapshot(false)
@@ -1859,7 +1865,7 @@ func (e *Engine) writeSnapshotAndCommit(log *zap.Logger, closedFiles []string, s
 	}()
 
 	// write the new snapshot files
-	newFiles, err := e.Compactor.WriteSnapshot(snapshot, formatFileName)
+	newFiles, err := e.Compactor.WriteSnapshot(snapshot)
 	if err != nil {
 		log.Info("Error writing snapshot from compactor", zap.Error(err))
 		return err

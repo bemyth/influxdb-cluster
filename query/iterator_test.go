@@ -1462,6 +1462,38 @@ func TestIteratorOptions_MarshalBinary(t *testing.T) {
 		t.Fatalf("unexpected options: %s", spew.Sdump(other))
 	}
 }
+func TestExpr_aaa(t *testing.T) {
+	cs := `fo = 'a'`
+	csm := influxql.MustParseExpr(cs)
+	//expr,err  := influxql.ParseExpr(csm)
+	//if err != nil{
+	//	fmt.Println(err)
+	//}
+	scsm := csm.String()
+
+	scsmm := influxql.MustParseExpr(scsm)
+	fmt.Println(scsmm)
+}
+
+func TestEncode(t *testing.T) {
+	var buf bytes.Buffer
+	itr := &FloatIterator{
+		Points: []query.FloatPoint{
+			{Name: "cpu", Tags: ParseTags("host=A"), Time: 0, Value: 0},
+			{Name: "mem", Tags: ParseTags("host=B"), Time: 1, Value: 10},
+		},
+		stats: query.IteratorStats{
+			SeriesN: 2,
+			PointN:  0,
+		},
+	}
+	enc := query.NewIteratorEncoder(&buf)
+	//buf.Bytes()
+	enc.EncodeIterator(itr)
+
+	query.NewReaderIterator(context.Background(), &buf, influxql.Float, itr.Stats())
+
+}
 
 // Ensure iterator can be encoded and decoded over a byte stream.
 func TestIterator_EncodeDecode(t *testing.T) {
@@ -1486,8 +1518,12 @@ func TestIterator_EncodeDecode(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var buf1 bytes.Buffer
+	buf1.Write(buf.Bytes())
+	//n,_ := buf1.Read(buf.Bytes())
+	//println(n)
 	// Decode from the buffer.
-	dec := query.NewReaderIterator(context.Background(), &buf, influxql.Float, itr.Stats())
+	dec := query.NewReaderIterator(context.Background(), &buf1, influxql.Float, itr.Stats())
 
 	// Initial stats should exist immediately.
 	fdec := dec.(query.FloatIterator)

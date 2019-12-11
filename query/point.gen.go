@@ -240,6 +240,21 @@ func (dec *FloatPointDecoder) DecodeFloatPoint(p *FloatPoint) error {
 	}
 }
 
+//
+//type RemotePoint struct {
+//	Name string
+//	Tags Tags
+//
+//	Time  int64
+//	Value int64
+//	Aux   []interface{}
+//
+//	// Total number of points that were combined into this point from an aggregate.
+//	// If this is zero, the point is not the result of an aggregate function.
+//	Aggregated uint32
+//	Nil        bool
+//}
+
 // IntegerPoint represents a point with a int64 value.
 // DO NOT ADD ADDITIONAL FIELDS TO THIS STRUCT.
 // See TestPoint_Fields in influxql/point_test.go for more details.

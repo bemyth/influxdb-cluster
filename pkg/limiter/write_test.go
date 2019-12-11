@@ -9,11 +9,6 @@ import (
 	"github.com/influxdata/influxdb/pkg/limiter"
 )
 
-type discardCloser struct{}
-
-func (d discardCloser) Write(b []byte) (int, error) { return len(b), nil }
-func (d discardCloser) Close() error                { return nil }
-
 func TestWriter_Limited(t *testing.T) {
 	r := bytes.NewReader(bytes.Repeat([]byte{0}, 1024*1024))
 
@@ -32,3 +27,8 @@ func TestWriter_Limited(t *testing.T) {
 		t.Errorf("rate limit mismath: exp %f, got %f", float64(limit), rate)
 	}
 }
+
+type discardCloser struct{}
+
+func (d discardCloser) Write(b []byte) (int, error) { return len(b), nil }
+func (d discardCloser) Close() error                { return nil }

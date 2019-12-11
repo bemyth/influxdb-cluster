@@ -37,6 +37,17 @@ const (
 	// will compact all TSM files in a shard if it hasn't received a write or delete
 	DefaultCompactFullWriteColdDuration = time.Duration(4 * time.Hour)
 
+	// DefaultCompactThroughput is the rate limit in bytes per second that we
+	// will allow TSM compactions to write to disk. Not that short bursts are allowed
+	// to happen at a possibly larger value, set by DefaultCompactThroughputBurst.
+	// A value of 0 here will disable compaction rate limiting
+	DefaultCompactThroughput = 48 * 1024 * 1024
+
+	// DefaultCompactThroughputBurst is the rate limit in bytes per second that we
+	// will allow TSM compactions to write to disk. If this is not set, the burst value
+	// will be set to equal the normal throughput
+	DefaultCompactThroughputBurst = 48 * 1024 * 1024
+
 	// DefaultMaxPointsPerBlock is the maximum number of points in an encoded
 	// block in a TSM file
 	DefaultMaxPointsPerBlock = 1000
@@ -79,6 +90,8 @@ type Config struct {
 	CacheSnapshotMemorySize        toml.Size     `toml:"cache-snapshot-memory-size"`
 	CacheSnapshotWriteColdDuration toml.Duration `toml:"cache-snapshot-write-cold-duration"`
 	CompactFullWriteColdDuration   toml.Duration `toml:"compact-full-write-cold-duration"`
+	CompactThroughput              toml.Size     `toml:"compact-throughput"`
+	CompactThroughputBurst         toml.Size     `toml:"compact-throughput-burst"`
 
 	// Limits
 
@@ -105,6 +118,12 @@ type Config struct {
 	MaxIndexLogFileSize toml.Size `toml:"max-index-log-file-size"`
 
 	TraceLoggingEnabled bool `toml:"trace-logging-enabled"`
+
+	// TSMWillNeed controls whether we hint to the kernel that we intend to
+	// page in mmap'd sections of TSM files. This setting defaults to off, as it has
+	// been found to be problematic in some cases. It may help users who have
+	// slow disks.
+	TSMWillNeed bool `toml:"tsm-use-madv-willneed"`
 }
 
 // NewConfig returns the default configuration for tsdb.
@@ -119,6 +138,8 @@ func NewConfig() Config {
 		CacheSnapshotMemorySize:        toml.Size(DefaultCacheSnapshotMemorySize),
 		CacheSnapshotWriteColdDuration: toml.Duration(DefaultCacheSnapshotWriteColdDuration),
 		CompactFullWriteColdDuration:   toml.Duration(DefaultCompactFullWriteColdDuration),
+		CompactThroughput:              toml.Size(DefaultCompactThroughput),
+		CompactThroughputBurst:         toml.Size(DefaultCompactThroughputBurst),
 
 		MaxSeriesPerDatabase:     DefaultMaxSeriesPerDatabase,
 		MaxValuesPerTag:          DefaultMaxValuesPerTag,
@@ -127,6 +148,7 @@ func NewConfig() Config {
 		MaxIndexLogFileSize: toml.Size(DefaultMaxIndexLogFileSize),
 
 		TraceLoggingEnabled: false,
+		TSMWillNeed:         false,
 	}
 }
 

@@ -106,15 +106,16 @@ func (s *Store) Statistics(tags map[string]string) []models.Statistic {
 	databases := s.Databases()
 	statistics := make([]models.Statistic, 0, len(databases))
 	for _, database := range databases {
+		log := s.Logger.With(logger.Database(database))
 		sc, err := s.SeriesCardinality(database)
 		if err != nil {
-			s.Logger.Info("Cannot retrieve series cardinality", zap.Error(err))
+			log.Info("Cannot retrieve series cardinality", zap.Error(err))
 			continue
 		}
 
 		mc, err := s.MeasurementsCardinality(database)
 		if err != nil {
-			s.Logger.Info("Cannot retrieve measurement cardinality", zap.Error(err))
+			log.Info("Cannot retrieve measurement cardinality", zap.Error(err))
 			continue
 		}
 
@@ -190,10 +191,13 @@ func (s *Store) Open() error {
 	}
 
 	s.opened = true
-	s.wg.Add(1)
 
 	if !s.EngineOptions.MonitorDisabled {
-		go s.monitorShards()
+		s.wg.Add(1)
+		go func() {
+			s.wg.Done()
+			s.monitorShards()
+		}()
 	}
 
 	return nil
@@ -214,11 +218,6 @@ func (s *Store) loadShards() error {
 	if lim == 0 {
 		lim = runtime.GOMAXPROCS(0) / 2 // Default to 50% of cores for compactions
 
-		// On systems with more cores, cap at 4 to reduce disk utilization
-		if lim > 4 {
-			lim = 4
-		}
-
 		if lim < 1 {
 			lim = 1
 		}
@@ -231,12 +230,29 @@ func (s *Store) loadShards() error {
 
 	s.EngineOptions.CompactionLimiter = limiter.NewFixed(lim)
 
-	// Env var to disable throughput limiter.  This will be moved to a config option in 1.5.
-	if os.Getenv("INFLUXDB_DATA_COMPACTION_THROUGHPUT") == "" {
-		s.EngineOptions.CompactionThroughputLimiter = limiter.NewRate(48*1024*1024, 48*1024*1024)
+	compactionSettings := []zapcore.Field{zap.Int("max_concurrent_compactions", lim)}
+	throughput := int(s.EngineOptions.Config.CompactThroughput)
+	throughputBurst := int(s.EngineOptions.Config.CompactThroughputBurst)
+	if throughput > 0 {
+		if throughputBurst < throughput {
+			throughputBurst = throughput
+		}
+
+		compactionSettings = append(
+			compactionSettings,
+			zap.Int("throughput_bytes_per_second", throughput),
+			zap.Int("throughput_bytes_per_second_burst", throughputBurst),
+		)
+		s.EngineOptions.CompactionThroughputLimiter = limiter.NewRate(throughput, throughputBurst)
 	} else {
-		s.Logger.Info("Compaction throughput limit disabled")
+		compactionSettings = append(
+			compactionSettings,
+			zap.String("throughput_bytes_per_second", "unlimited"),
+			zap.String("throughput_bytes_per_second_burst", "unlimited"),
+		)
 	}
+
+	s.Logger.Info("Compaction settings", compactionSettings...)
 
 	log, logEnd := logger.NewOperation(s.Logger, "Open store", "tsdb_open")
 	defer logEnd()
@@ -344,6 +360,7 @@ func (s *Store) loadShards() error {
 
 					// Disable compactions, writes and queries until all shards are loaded
 					shard.EnableOnOpen = false
+					shard.CompactionDisabled = s.EngineOptions.CompactionDisabled
 					shard.WithLogger(s.baseLogger)
 
 					err = shard.Open()
@@ -926,7 +943,7 @@ func (s *Store) Databases() []string {
 	defer s.mu.RUnlock()
 
 	databases := make([]string, 0, len(s.databases))
-	for k, _ := range s.databases {
+	for k := range s.databases {
 		databases = append(databases, k)
 	}
 	return databases
@@ -1340,7 +1357,7 @@ func (s *Store) TagKeys(auth query.Authorizer, shardIDs []uint64, cond influxql.
 			switch e.Op {
 			case influxql.EQ, influxql.NEQ, influxql.EQREGEX, influxql.NEQREGEX:
 				tag, ok := e.LHS.(*influxql.VarRef)
-				if !ok || strings.HasPrefix(tag.Val, "_") {
+				if !ok || influxql.IsSystemName(tag.Val) {
 					return nil
 				}
 			}
@@ -1444,7 +1461,6 @@ type TagValues struct {
 	Measurement string
 	Values      []KeyValue
 }
-
 type TagValuesSlice []TagValues
 
 func (a TagValuesSlice) Len() int           { return len(a) }
@@ -1496,7 +1512,7 @@ func (s *Store) TagValues(auth query.Authorizer, shardIDs []uint64, cond influxq
 			switch e.Op {
 			case influxql.EQ, influxql.NEQ, influxql.EQREGEX, influxql.NEQREGEX:
 				tag, ok := e.LHS.(*influxql.VarRef)
-				if !ok || strings.HasPrefix(tag.Val, "_") {
+				if !ok || influxql.IsSystemName(tag.Val) {
 					return nil
 				}
 			}
@@ -1738,7 +1754,6 @@ func mergeTagValues(valueIdxs [][2]int, tvs ...tagValues) TagValues {
 }
 
 func (s *Store) monitorShards() {
-	defer s.wg.Done()
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
 	t2 := time.NewTicker(time.Minute)
@@ -1752,7 +1767,9 @@ func (s *Store) monitorShards() {
 			for _, sh := range s.shards {
 				if sh.IsIdle() {
 					if err := sh.Free(); err != nil {
-						s.Logger.Warn("Error while freeing cold shard resources", zap.Error(err))
+						s.Logger.Warn("Error while freeing cold shard resources",
+							zap.Error(err),
+							logger.Shard(sh.ID()))
 					}
 				} else {
 					sh.SetCompactionsEnabled(true)
@@ -1810,7 +1827,10 @@ func (s *Store) monitorShards() {
 				indexSet := IndexSet{Indexes: []Index{firstShardIndex}, SeriesFile: sfile}
 				names, err := indexSet.MeasurementNamesByExpr(nil, nil)
 				if err != nil {
-					s.Logger.Warn("Cannot retrieve measurement names", zap.Error(err))
+					s.Logger.Warn("Cannot retrieve measurement names",
+						zap.Error(err),
+						logger.Shard(sh.ID()),
+						logger.Database(db))
 					return nil
 				}
 

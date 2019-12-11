@@ -431,7 +431,8 @@ func (b *exprIteratorBuilder) buildCallIterator(ctx context.Context, expr *influ
 			builder.writeMode = false
 
 			ref := expr.Args[0].(*influxql.VarRef)
-			i, err := builder.buildVarRefIterator(ctx, ref)
+			i, err := builder.
+				buildVarRefIterator(ctx, ref)
 			if err != nil {
 				return nil, err
 			}

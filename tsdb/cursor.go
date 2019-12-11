@@ -41,6 +41,31 @@ type BooleanBatchCursor interface {
 	Next() (keys []int64, values []bool)
 }
 
+type IntegerArrayCursor interface {
+	Cursor
+	Next() *IntegerArray
+}
+
+type FloatArrayCursor interface {
+	Cursor
+	Next() *FloatArray
+}
+
+type UnsignedArrayCursor interface {
+	Cursor
+	Next() *UnsignedArray
+}
+
+type StringArrayCursor interface {
+	Cursor
+	Next() *StringArray
+}
+
+type BooleanArrayCursor interface {
+	Cursor
+	Next() *BooleanArray
+}
+
 type CursorRequest struct {
 	Name      []byte
 	Tags      models.Tags
@@ -68,4 +93,32 @@ func CreateCursorIterators(ctx context.Context, shards []*Shard) (CursorIterator
 		return nil, nil
 	}
 	return q, nil
+}
+
+// TODO(sgc): will be removed once batch cursors are gone
+type ctxKey int
+
+const (
+	cursorTypeKey ctxKey = iota
+)
+
+type CursorType int
+
+const (
+	ArrayCursorType CursorType = iota
+	BatchCursorType
+	DefaultCursorType
+)
+
+// NewContextWithCursorType returns a new context with the specified CursorType.
+func NewContextWithCursorType(ctx context.Context, t CursorType) context.Context {
+	return context.WithValue(ctx, cursorTypeKey, t)
+}
+
+// CursorTypeFromContext returns the CursorType associated with ctx or DefaultCursorType if none was set.
+func CursorTypeFromContext(ctx context.Context) CursorType {
+	if v, ok := ctx.Value(cursorTypeKey).(CursorType); ok {
+		return v
+	}
+	return DefaultCursorType
 }

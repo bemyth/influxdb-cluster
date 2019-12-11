@@ -107,6 +107,11 @@ func TestEngine_Digest(t *testing.T) {
 		}
 		defer dr.Close()
 
+		_, err = dr.ReadManifest()
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		got := []span{}
 
 		for {
@@ -394,14 +399,14 @@ func TestEngine_Export(t *testing.T) {
 	}
 
 	// TEST 1: did we get any extra files not found in the store?
-	for k, _ := range fileData {
+	for k := range fileData {
 		if _, ok := fileNames[k]; !ok {
 			t.Errorf("exported a file not in the store: %s", k)
 		}
 	}
 
 	// TEST 2: did we miss any files that the store had?
-	for k, _ := range fileNames {
+	for k := range fileNames {
 		if _, ok := fileData[k]; !ok {
 			t.Errorf("failed to export a file from the store: %s", k)
 		}
@@ -1794,12 +1799,12 @@ func TestEngine_CreateCursor_Ascending(t *testing.T) {
 			}
 			defer cur.Close()
 
-			fcur := cur.(tsdb.FloatBatchCursor)
-			ts, vs := fcur.Next()
-			if !cmp.Equal([]int64{2, 3, 10, 11}, ts) {
+			fcur := cur.(tsdb.FloatArrayCursor)
+			a := fcur.Next()
+			if !cmp.Equal([]int64{2, 3, 10, 11}, a.Timestamps) {
 				t.Fatal("unexpect timestamps")
 			}
-			if !cmp.Equal([]float64{1.2, 1.3, 10.1, 11.2}, vs) {
+			if !cmp.Equal([]float64{1.2, 1.3, 10.1, 11.2}, a.Values) {
 				t.Fatal("unexpect timestamps")
 			}
 		})
@@ -1854,12 +1859,12 @@ func TestEngine_CreateCursor_Descending(t *testing.T) {
 			}
 			defer cur.Close()
 
-			fcur := cur.(tsdb.FloatBatchCursor)
-			ts, vs := fcur.Next()
-			if !cmp.Equal([]int64{11, 10, 3, 2}, ts) {
+			fcur := cur.(tsdb.FloatArrayCursor)
+			a := fcur.Next()
+			if !cmp.Equal([]int64{11, 10, 3, 2}, a.Timestamps) {
 				t.Fatal("unexpect timestamps")
 			}
-			if !cmp.Equal([]float64{11.2, 10.1, 1.3, 1.2}, vs) {
+			if !cmp.Equal([]float64{11.2, 10.1, 1.3, 1.2}, a.Values) {
 				t.Fatal("unexpect timestamps")
 			}
 		})
