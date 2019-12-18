@@ -34,12 +34,6 @@ const (
 	// ShardGroupDeletedExpiration is the amount of time before a shard group info will be removed from cached
 	// data after it has been marked deleted (2 weeks).
 	ShardGroupDeletedExpiration = -2 * 7 * 24 * time.Hour
-
-	DefaultCacheDataDir = "/influxdb/cachedata"
-
-	DefaultProxyNodeDir = "/influxdb/agent"
-
-	DefaultProxyPeersHost = ":1999"
 )
 
 var (

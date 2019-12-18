@@ -17,8 +17,6 @@ type IteratorCreator interface {
 	io.Closer
 }
 
-//cluster shard mapper 面向查询语句；返回构建查询计划时需要的信息，由于这些信息不确定在哪一个shard上，所以需要在一定范围类的所有节点执行
-//而我们可以根据shard中owner来对其中一个节点执行就可以了。
 //在没有副本的情况下，一个shard中只有一个拥有者，而有副本时，可能多个节点存的是同一个shard，在查询信息时，我们只需要在一个节点上
 //执行就可以，更特殊的我们可以对本地节点走特殊通道，但在此为了一致性，暂时全部采用remote的形式
 type ClusterShardMapper struct {
@@ -66,7 +64,7 @@ func (c *ClusterShardMapper) mapShards(a *ClusterShardMapping, sources influxql.
 					}
 					for _, g := range groups {
 						for _, shardInfo := range g.Shards {
-							//副本中随机挑选一个节点 //从副本中挑选一个活跃的节点
+							//从副本中挑选一个活跃的节点
 							nodeID, err := c.MetaClient.GetOnlineNodeByShardID(shardInfo)
 							if err != nil {
 								return err

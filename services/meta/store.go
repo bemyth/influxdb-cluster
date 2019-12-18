@@ -37,7 +37,7 @@ type Store struct {
 	logger *zap.Logger
 	cfg    *RaftConfig
 
-	datachanged chan struct{}
+	dataChanged chan struct{}
 
 	Transmitter interface {
 		JoinToCluster(target, raftID, raftAddr string) error
@@ -53,7 +53,7 @@ func NewStore(c *RaftConfig) *Store {
 
 		data:        &Data{},
 		mu:          sync.RWMutex{},
-		datachanged: make(chan struct{}),
+		dataChanged: make(chan struct{}),
 		cfg:         c,
 	}
 }
@@ -153,7 +153,7 @@ func parseServers(ss []string) ([]raft.Server, error) {
 
 func (s *Store) Changed() {
 	select {
-	case <-s.datachanged:
+	case <-s.dataChanged:
 		return
 	}
 }

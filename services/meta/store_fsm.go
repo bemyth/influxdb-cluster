@@ -67,8 +67,8 @@ func (f *FSMStore) Apply(l *raft.Log) interface{} {
 	f.data.Term = l.Term
 	f.data.Index = l.Index
 
-	close(f.datachanged)
-	f.datachanged = make(chan struct{})
+	close(f.dataChanged)
+	f.dataChanged = make(chan struct{})
 	return err
 }
 func (f *FSMStore) applyUpdateRetentionPolicy(cmd *internal.Command) error {

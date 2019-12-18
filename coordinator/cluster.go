@@ -193,10 +193,12 @@ func (c *Cluster) DeleteSeries(database string, sources influxql.Sources, expr i
 	if err != nil {
 		return err
 	}
-	sexpr, err := influxql.EncodeCond(expr)
-	if err != nil {
-		return err
-	}
+	//TODO 不考虑
+	//sexpr, err := influxql.EncodeCond(expr)
+	//if err != nil {
+	//	return err
+	//}
+	sexpr := ""
 	for _, host := range hosts {
 		for i := 1; i <= NumberOfRetryWithDeleteError; i++ {
 			if err := c.Transmitter.TaskDeleteSeries(host, database, sources, expr); err != nil {
@@ -215,41 +217,6 @@ func (c *Cluster) DeleteSeries(database string, sources influxql.Sources, expr i
 	c.logger.Info(fmt.Sprintf("delete series %s success", sexpr))
 	return err
 }
-
-//异步模式 删除series
-//func (c *Cluster) DeleteSeries(database string, sources influxql.Sources, expr influxql.Expr) error {
-//	//考虑series的删除操作，以及tsm存储系统的特殊性，没必要先查询这个series存在的节点，再去删除，直接执行就好了，效率更高
-//	hosts, err := c.MetaClient.GetAllRPCHosts()
-//	if err != nil {
-//		return err
-//	}
-//	sexpr, err := influxql.EncodeCond(expr)
-//	if err != nil {
-//		return err
-//	}
-//	var wg sync.WaitGroup
-//	for _, host := range hosts {
-//		wg.Add(1)
-//		go func(target string) {
-//			retry := 0
-//			defer wg.Done()
-//			for true {
-//
-//				retry++
-//				if err := c.Transmitter.TaskDeleteSeries(target, database, sources, expr); err != nil {
-//					c.logger.Warn(fmt.Sprintf("delete series %s in %s error & ready to retry %d", sexpr, target, retry))
-//					time.Sleep(100 * time.Millisecond)
-//					continue
-//				}
-//				c.logger.Info(fmt.Sprintf("delete series %s in %s success", sexpr, target))
-//				break
-//			}
-//		}(host)
-//	}
-//	wg.Wait()
-//	c.logger.Info(fmt.Sprintf("delete series %s success", sexpr))
-//	return err
-//}
 
 //顺序方式删除measurement
 func (c *Cluster) DeleteMeasurement(database, name string) error {
@@ -276,34 +243,6 @@ func (c *Cluster) DeleteMeasurement(database, name string) error {
 	return nil
 }
 
-//异步模式 删除measurement
-//func (c *Cluster) DeleteMeasurement(database, name string) error {
-//	hosts, err := c.MetaClient.GetAllRPCHosts()
-//	if err != nil {
-//		return err
-//	}
-//	var wg sync.WaitGroup
-//	for _, host := range hosts {
-//		wg.Add(1)
-//		go func(target string) {
-//			defer wg.Done()
-//			retry := 0
-//			for true {
-//				retry++
-//				if err := c.Transmitter.TaskDeleteMeasurement(target, database, name); err != nil {
-//					c.logger.Warn(fmt.Sprintf("delete measurement %s in %s error & ready to retry %d", name, target, retry))
-//					continue
-//				}
-//				c.logger.Info(fmt.Sprintf("delete measurement %s in %s success", name, target))
-//				break
-//			}
-//		}(host)
-//	}
-//	wg.Wait()
-//	c.logger.Info(fmt.Sprintf("delete measurement %s success", name))
-//	return nil
-//}
-
 //顺序方式删除保留策略
 func (c *Cluster) DeleteRetentionPolicy(database, name string) error {
 	hosts, err := c.MetaClient.GetAllRPCHosts()
@@ -328,35 +267,6 @@ func (c *Cluster) DeleteRetentionPolicy(database, name string) error {
 	return err
 }
 
-//异步模式 删除保留策略
-//func (c *Cluster) DeleteRetentionPolicy(database, name string) error {
-//	hosts, err := c.MetaClient.GetAllRPCHosts()
-//	if err != nil {
-//		return err
-//	}
-//	var wg sync.WaitGroup
-//	for _, host := range hosts {
-//		wg.Add(1)
-//		go func(target string) {
-//			retry := 0
-//			defer wg.Done()
-//			for true {
-//
-//				retry++
-//				if err := c.Transmitter.TaskDeleteRetentionPolicy(target, database, name); err != nil {
-//					c.logger.Warn(fmt.Sprintf("delete retention policy %s in %s error & ready to retry %d", name, target, retry))
-//					continue
-//				}
-//				c.logger.Warn(fmt.Sprintf("delete retention policy %s in %s success", name, target))
-//				break
-//			}
-//		}(host)
-//	}
-//	wg.Wait()
-//	c.logger.Warn(fmt.Sprintf("delete retention policy %s success", name))
-//	return err
-//}
-
 //顺序方式删除shard
 func (c *Cluster) DeleteShard(shardID uint64) error {
 	hosts, err := c.MetaClient.GetRPCHostsByShardID(shardID)
@@ -380,34 +290,6 @@ func (c *Cluster) DeleteShard(shardID uint64) error {
 	c.logger.Info(fmt.Sprintf("delete shard %d success", shardID))
 	return nil
 }
-
-//异步模式 删除shard
-//func (c *Cluster) DeleteShard(shardID uint64) error {
-//	hosts, err := c.MetaClient.GetRPCHostsByShardID(shardID)
-//	if err != nil {
-//		return err
-//	}
-//	var wg sync.WaitGroup
-//	for _, host := range hosts {
-//		wg.Add(1)
-//		go func(target string) {
-//			defer wg.Done()
-//			retry := 0
-//			for true {
-//				retry++
-//				if err := c.Transmitter.TaskDeleteShard(target, shardID); err != nil {
-//					c.logger.Warn(fmt.Sprintf("delete shard %d in %s error & ready to retry %d", shardID, target, retry))
-//					continue
-//				}
-//				c.logger.Info(fmt.Sprintf("delete shard %d in %s success", shardID, target))
-//				break
-//			}
-//		}(host)
-//	}
-//	wg.Wait()
-//	c.logger.Info(fmt.Sprintf("delete shard %d success", shardID))
-//	return nil
-//}
 
 //异步模式 show tag keys
 func (c *Cluster) TagKeys(auth query.Authorizer, shardIDs []uint64, cond influxql.Expr) ([]tsdb.TagKeys, error) {

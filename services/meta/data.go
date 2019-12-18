@@ -54,10 +54,7 @@ type Data struct {
 	MaxShardGroupID uint64
 	MaxShardID      uint64
 
-	////TODO(shan.jt for cluster) restore datanodes
 	DataNodes []NodeInfo
-	//MetaNodes []NodeInfo
-	//PreVersion int64
 }
 
 // Database returns a DatabaseInfo by the database name.
@@ -377,10 +374,6 @@ func (data *Data) CreateShardGroup(database, policy string, timestamp time.Time)
 		replicaN = len(data.DataNodes)
 	}
 
-	//TODO
-	//cpuNum := runtime.NumCPU()
-	//
-	//shardN := cpuNum * len(data.DataNodes) / replicaN
 	shardN := len(data.DataNodes) / replicaN
 
 	// Create the shard group.
@@ -402,7 +395,6 @@ func (data *Data) CreateShardGroup(database, policy string, timestamp time.Time)
 		}
 	}
 
-	//TODO(在raft事务中，每个节点可不能随机数，坑死我了)
 	rand := int(data.Index)
 	for i := range sgi.Shards {
 		si := &sgi.Shards[i]
